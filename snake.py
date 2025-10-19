@@ -1,4 +1,5 @@
-import pygame, sys, random
+import pygame, sys, random,os
+from pathlib import Path
 from pygame.math import Vector2
 
 pygame.init()
@@ -8,12 +9,60 @@ score_font = pygame.font.Font(None, 40)
 
 GREEN = (173, 204, 96)
 DARK_GREEN = (43, 51, 24)
+BLACK = (0, 0, 0)
+
+DIFFICULTY_SPEEDS = {
+	"EASY": 200,
+	"MEDIUM": 150,
+	"HARD": 100,
+	"EXTREME": 75
+}
+
+POWERUP_DURATION = 5000
 
 cell_size = 30
 number_of_cells = 25
 
 OFFSET = 75
+def load_high_score():
+	try:
+		with open("high_score.txt", "r") as file:
+			return int(file.read())
+	except FileNotFoundError:
+		return 0
+def save_high_score(score):
+	with open("high_score.txt", "w") as file:
+		file.write(str(score))
 
+class PowerUp:
+	def __init__(self, snake_body):
+		self.position = Vector2(-1, -1)
+		self.active = False
+		self.type = "DOUBLE"
+		self.surface = pygame.Surface((cell_size, cell_size))
+		self.surface.fill((255, 215, 0))  # Gold color 
+		self.pickup_sound = pygame.mixer.Sound("Sounds/powerup.mp3")
+
+	def spawn(self, snake_body):
+		if random.random() < 0.25:  # 25% chance
+			self.position = self.generate_random_pos(snake_body)
+			self.active = True
+	def generate_random_pos(self,snake_body):
+		x = random.randint(0, number_of_cells-1)
+		y = random.randint(0, number_of_cells-1)
+		pos = Vector2(x, y)
+		while pos in snake_body:
+			x = random.randint(0, number_of_cells-1)
+			y = random.randint(0, number_of_cells-1)
+			pos = Vector2(x, y)	
+		return pos
+	def draw(self):
+		if self.active:
+			powerup_rect = pygame.Rect(OFFSET + self.position.x * cell_size, 
+							  		   OFFSET + self.position.y * cell_size, 
+				                       cell_size, cell_size
+)
+			screen.blit(self.surface, powerup_rect)
 class Food:
 	def __init__(self, snake_body):
 		self.position = self.generate_random_pos(snake_body)
@@ -58,23 +107,68 @@ class Snake:
 		self.body = [Vector2(6,9), Vector2(5,9), Vector2(4,9)]
 		self.direction = Vector2(1, 0)
 
+SNAKE_UPDATE = pygame.USEREVENT
+pygame.time.set_timer(SNAKE_UPDATE, 200) 	
+
 class Game:
 	def __init__(self):
 		self.snake = Snake()
 		self.food = Food(self.snake.body)
 		self.state = "RUNNING"
 		self.score = 0
+		self.difficulty = "MEDIUM"
+		self.update_speed()
+		self.started = False
+		self.high_score = load_high_score()
+		self.powerup = PowerUp(self.snake.body)
+		self.score_multiplier = 1
+		self.powerup_end_time = 0	
+	
+	def update_high_score(self):
+		if self.score > self.high_score:
+			self.high_score = self.score
+			save_high_score(self.high_score)
 
+	def start_prompt(self):
+		if not self.started and self.state == "RUNNING":
+			start_text = score_font.render("Press any arrow key to start", True, DARK_GREEN)
+			start_rect = start_text.get_rect(center=(OFFSET + (cell_size*number_of_cells)/2, OFFSET + (cell_size*number_of_cells)/2))
+			screen.blit(start_text, start_rect)
+	def update_speed(self):
+		pygame.time.set_timer(SNAKE_UPDATE,DIFFICULTY_SPEEDS[self.difficulty])
+	def change_difficulty(self, new_difficulty):
+		self.difficulty = new_difficulty
+		self.update_speed()
+	
 	def draw(self):
 		self.food.draw()
 		self.snake.draw()
+		self.powerup.draw()
 
 	def update(self):
-		if self.state == "RUNNING":
+		if self.state == "RUNNING" and self.started:
 			self.snake.update()
 			self.check_collision_with_food()
 			self.check_collision_with_edges()
 			self.check_collision_with_tail()
+			self.check_collision_with_powerup()
+			self.update_powerup_status()
+			if random.random() < 0.025:
+				self.powerup.spawn(self.snake.body)	
+	
+	def check_collision_with_powerup(self):
+		if self.powerup.active and self.snake.body[0] == self.powerup.position:
+			self.activate_powerup()
+	
+	def activate_powerup(self):
+		self.powerup.active = False
+		self.score_multiplier = 2	
+		self.powerup_end_time = pygame.time.get_ticks() + POWERUP_DURATION
+		self.powerup.pickup_sound.play()
+
+	def update_powerup_status(self):
+		if self.score_multiplier > 1 and pygame.time.get_ticks() >= self.powerup_end_time:
+			self.score_multiplier = 1
 
 	def check_collision_with_food(self):
 		if self.snake.body[0] == self.food.position:
@@ -90,16 +184,20 @@ class Game:
 			self.game_over()
 
 	def game_over(self):
+		self.update_high_score()
 		self.snake.reset()
 		self.food.position = self.food.generate_random_pos(self.snake.body)
 		self.state = "STOPPED"
 		self.score = 0
+		self.score_multiplier = 1 
+		self.powerup.active = False
 		self.snake.wall_hit_sound.play()
 
 	def check_collision_with_tail(self):
 		headless_body = self.snake.body[1:]
 		if self.snake.body[0] in headless_body:
 			self.game_over()
+		
 
 screen = pygame.display.set_mode((2*OFFSET + cell_size*number_of_cells, 2*OFFSET + cell_size*number_of_cells))
 
@@ -110,8 +208,7 @@ clock = pygame.time.Clock()
 game = Game()
 food_surface = pygame.image.load("Graphics/food.png")
 
-SNAKE_UPDATE = pygame.USEREVENT
-pygame.time.set_timer(SNAKE_UPDATE, 200) 	
+
 
 while True:
 	for event in pygame.event.get():
@@ -120,10 +217,23 @@ while True:
 		if event.type == pygame.QUIT:
 			pygame.quit()
 			sys.exit()
+		
 
 		if event.type == pygame.KEYDOWN:
 			if game.state == "STOPPED":
 				game.state = "RUNNING"
+				game.started = False
+			if event.key in (pygame.K_UP, pygame.K_DOWN, pygame.K_LEFT, pygame.K_RIGHT):
+				game.started = True
+			if event.key == pygame.K_1:
+				game.change_difficulty("EASY")
+			if event.key == pygame.K_2:
+				game.change_difficulty("MEDIUM")
+			if event.key == pygame.K_3:
+				game.change_difficulty("HARD")
+			if event.key == pygame.K_4:
+				game.change_difficulty("EXTREME")
+			
 			if event.key == pygame.K_UP and game.snake.direction != Vector2(0, 1):
 				game.snake.direction = Vector2(0, -1)
 			if event.key == pygame.K_DOWN and game.snake.direction != Vector2(0, -1):
@@ -133,15 +243,29 @@ while True:
 			if event.key == pygame.K_RIGHT and game.snake.direction != Vector2(-1, 0):
 				game.snake.direction = Vector2(1, 0)
 
-	#Drawing
+			
 	screen.fill(GREEN)
 	pygame.draw.rect(screen, DARK_GREEN, 
 		(OFFSET-5, OFFSET-5, cell_size*number_of_cells+10, cell_size*number_of_cells+10), 5)
 	game.draw()
-	title_surface = title_font.render("Retro Snake", True, DARK_GREEN)
+	
+	title_surface = title_font.render("Snake", True, BLACK)
 	score_surface = score_font.render(str(game.score), True, DARK_GREEN)
-	screen.blit(title_surface, (OFFSET-5, 20))
+	difficulty_surface = score_font.render("Difficulty: " + game.difficulty, True, DARK_GREEN)
+	screen.blit(difficulty_surface, (OFFSET + 200, OFFSET + cell_size*number_of_cells +10))
+	difficulty_info = score_font.render("Press 1-4 to change difficulty", True, DARK_GREEN)
+	difficulty_info_rect = difficulty_info.get_rect(centerx=OFFSET + (cell_size*number_of_cells)/2,y=OFFSET + cell_size*number_of_cells + 40)
+	screen.blit(difficulty_info, difficulty_info_rect)
 	screen.blit(score_surface, (OFFSET-5, OFFSET + cell_size*number_of_cells +10))
-
+	high_score_surface = score_font.render("High Score: " + str(game.high_score), True, DARK_GREEN)
+	screen.blit(title_surface, (OFFSET-5, 20))
+	high_score_rect = high_score_surface.get_rect(topright=(OFFSET + cell_size*number_of_cells - 5, 20))
+	screen.blit(high_score_surface, high_score_rect)
+	if not game.started:
+		game.start_prompt()
+	if game.score_multiplier > 1:
+				powerup_text = score_font.render("2x POINTS ACTIVE!", True, (255,215,0))
+				powerup_rect = powerup_text.get_rect(midtop=(OFFSET + (cell_size*number_of_cells)/2, 20))
+				screen.blit(powerup_text, powerup_rect)
 	pygame.display.update()
 	clock.tick(60)
