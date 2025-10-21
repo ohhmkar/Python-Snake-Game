@@ -45,7 +45,6 @@ GAME_MODES = {
 	}
 }
 
-x₹x
 DIFFICULTY_SPEEDS = {
 	"EASY": 200,
 	"MEDIUM": 150,
@@ -574,3 +573,4 @@ while True:
 		game.draw_powerup_status()
 	pygame.display.update()
 	clock.tick(60)
+
